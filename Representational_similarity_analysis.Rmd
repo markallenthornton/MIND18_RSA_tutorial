@@ -1,0 +1,108 @@
+---
+title: "Representational similarity analysis (MIND 2018)"
+author: "Mark A. Thornton, Ph. D."
+date: "July 16, 2018"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction to RSA
+
+Representational similarity analysis (RSA) is statistical technique based on analyzing second-order isomorphisms. That rather than directly analyzing the relationship between one measure and another, RSA instead computes some measure of similarity within each measure and then compares these similarities to each other. RSA was pioneered by [Kriegeskorte, Mur, and Bandettini (2008, Frontiers in System Neuroscience)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2605405/) and has since become a popular method for analyzing neuroimaging data. Much of this popularity is driven by the fact that - because RSA focuses on second-order isomorphisms (i.e., similarities) - it is an incredibly flexible analytic technique, capable linking disparate measures of brain and behavior.
+
+![Kriegeskorte, Mur, and Bandettini (2008)](http://www.mrc-cbu.cam.ac.uk//personal/nikolaus.kriegeskorte/fig5_kriegeskorte_RSA_FNS.gif)
+
+In the context of fMRI, RSA usually takes the form of a correlation or regression between neural pattern similarity and a task, rating, or model. In this tutorial we will learn how to conduct these confirmatory RSAs as well as how
+to perform complementary exploratory analyses.
+
+## How to measure similarity?
+
+There are many ways to measure the similarity (or distance) between data objects. While the nature of the data in question partially constrains which metrics are appropriate, often we are still left with a choice of several different distance metrics for measuring a space. This section will explore distance metrics with the aim of building intuition for how to make such choices.
+
+The most common distance metrics used to measure similarity in fMRI data are mean distance, Euclidean distance, and correlation distance. In this section, we will simulate some data to illustrate the relationships between these difference metrics.
+
+
+
+```{r, echo=F, results="hide", include=F}
+# load packages
+if(!require(MASS)) install.packages("MASS"); require(MASS)
+if(!require(lattice)) install.packages("lattice"); require(lattice)
+if(!require(rasterVis)) install.packages("rasterVis"); require(rasterVis)
+```
+
+```{r}
+# data generation
+set.seed(1)
+sigmat <- matrix(c(1,0,.8,0,0,1,0,.8,.8,0,1,0,0,.8,0,1),nrow=4)
+dat <- mvrnorm(200,c(0,0,1,1),Sigma = sigmat)
+
+# plot data
+layout(matrix(1:4,2,2))
+for (i in 1:4){
+  plot(dat[,i],type="o",pch=20,ylim=c(-4,4),ylab="Activity",xlab=paste("Condition",as.character(i)))
+}
+
+```
+
+The data we've simulated here isn't particularly realistic, but it is ideally suited to display the differences between the three distance metrics in question. You can think of each of the four variables as the mean activity
+in a given condition in an fMRI experiment, across a 200 voxel region.
+
+### Mean distance
+We'll begin by calcuating mean distance - which is simply the differences in means between the four conditions. This metric discards any information in the pattern across voxels, and is most similar to a standard univariate fMRI analysis. The bar graph and heatmap below illustrate how these means differ.
+
+```{r}
+# mean distance
+cmeans<-apply(dat,2,mean) # calculate means of each variable (object)
+barplot(cmeans) # plot means
+dmat1<-as.matrix(dist(cmeans)) # calculate distance between means
+levelplot(dmat1) # heatmap of distances
+```
+
+### Euclidean distance
+Next we'll examine Euclidean distance. This distance corresponds to the "real" distance we use most frequently in our everday lives. The twist is that, instead of the familiar 3-D space we all inhabit, here we're calculating Eulcidean distance in an N-dimensional space, where N = # of voxels (in this case, 200). The heatmap and scatter plot matrix below illustrates the Euclidean distance between the four conditions.
+
+```{r}
+# Euclidean distance
+dmat2 <- as.matrix(dist(t(dat)))
+levelplot(dmat2)
+pairs(dat)
+```
+
+### Correlation distance
+Correlation distance is perhaps the most common metric used in fMRI analysis. This metric discards the mean completely (data are implicitly z-scores prior to correlation, or else it's just covariance) so all information comes from the pattern instead. Since correlation is naturally a similaritiy rather than dissimilarity measure, the  "distance" part is basically just a sign flip: 1-R. Again, the heatmap illustrates the results.
+
+```{r}
+# correlation distance
+dmat3 <- 1-cor(dat)
+levelplot(dmat3)
+```
+
+### Comparing distance metrics
+Now let's put these three distance metrics together. In the heatmaps below, you can see the lawful relationship between the three: mean and correlation distance are completely orthogonal to each other, but both "contribute" to the Euclidean distance. Correlation distance tends to be preferred because RSA (and MVPA in general) is often done in direct contrast to univariate analyses. Since the univariate analyses already reflect mean distance, it makes sense to over orthogonal information using correlation distance when doing RSA. However, if you're simply seeking an agnostic measure of neural similarity, and don't particularly care whether it is drive by the mean or the pattern, Euclidean distance might be a good bet.
+
+```{r}
+# combined plot
+dmat2<-dmat2/max(dmat2)
+rlist <- list(raster(dmat1),raster(dmat2),raster(dmat3))
+names(rlist)<-c("Mean","Euclidean","Correlation")
+levelplot(stack(rlist),layout=c(3,1),at=seq(0,1,.01))
+
+```
+
+Does this result mean that measuring neural similarity with correlations allows you to completely remove univariate signal from your results? Unfortunately not. In this toy example, we knew the exact borders of our region of interest. In reality, it will never be that clean, and real activity/patterns will be aliased with respect to your feature selection. For example, imagine that there is a single active blob in your data, but your region of interest is a bit too big and therefor the blob only fills 80% of the ROI. The remaining 20% of voxels will not change their activity across conditions. In the process, the difference between these two populations of voxels will induce correlations - as well as just mean activity differences - across conditions. Again, this might not matter depending on the conclusion you want to draw, but if your conclusion relies heavily on the results not being driven by univariate signal, this is bad news.
+
+## RSA: NHST, effect sizes, cross-validation, and model selection
+
+In this section, we will introduce RSA proper, and deal with some core issues surronding it. In particular, we will examine how to test the significance of RSA results at the item-analysis and group levels. We will also hear a couple caveats about RSA effect sizes, and learn how to perform cross-validation and model selection.
+
+Instead of the toy data used above, for this section we will turn to real fMRI, rating, and text data from a previous study: [Thornton & Mitchell, 2017, Cerebral Cortex](http://markallenthornton.com/cv/Thornton&Mitchell_CC_2017.pdf). In this study, participants performed a social judgment task in which they mentalized about 60 famous people. On each trial, participants would judgment how well a particular statement, such as "would like to learn karate," would apply to a particular target person, such as Bill Nye. This procedure repeated across the course of the study, fully crossing the 60 targets with 12 items. After preprocessing, the GLM was used to average across all trials featuring the same target person. The resulting regression coefficient patterns were z-scored by voxel to remove the influence of the global background pattern, and then correlated with each other to estimate their similarity. That's where we start:
+
+
+
+
+
+
+
