@@ -1,7 +1,7 @@
 ---
 title: "Representational similarity analysis (MIND 2018)"
 author: "Mark A. Thornton, Ph. D."
-date: "July 16, 2018"
+date: "August 1, 2018"
 output: html_notebook
 ---
 
